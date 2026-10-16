@@ -1,0 +1,37 @@
+{
+  "dataDir": "data",
+  "timeZone": "America/Mexico_City",
+  "locale": "es-MX",
+  "ownerPhones": ["5215550000001"],
+  "allowedPhones": ["5215550000002"],
+  "people": {
+    "5215550000003": "block",
+    "100000000000001@lid": { "access": "allow", "replies": "unlimited" }
+  },
+  "limits": {
+    "replies": { "max": 10, "hours": 1 },
+    "conversation": { "max": 20, "hours": 24 },
+    "chatReplies": { "max": 60, "hours": 1 },
+    "chatConversation": { "max": 5, "hours": 1 }
+  },
+  "allowedGroups": {
+    "120363000000000001@g.us": {
+      "name": "Grupo de ejemplo",
+      "members": "listed",
+      "people": { "5215550000004": "allow" },
+      "limits": { "replies": { "max": 5, "hours": 1 } }
+    },
+    "120363000000000002@g.us": "Otro grupo"
+  },
+  "textReplies": { "hola": "¡Hola a todos!" },
+  "quickReplies": { "reglas": "Sean amables y no envíen spam." },
+  "stickers": { "gato": "gato.webp" },
+  "audios": { "risa": "risa.ogg" },
+  "ai": {
+    "dailyBudgetUsd": 1,
+    "webSearch": true,
+    "maxSearchesPerDay": 1,
+    "farewell": "Adiós",
+    "country": "MX"
+  }
+}
