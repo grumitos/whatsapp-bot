@@ -18,9 +18,11 @@ beforeEach(() => {
 test("!sticker con una imagen sale como sticker al grupo", async () => {
   await deliver(FRIEND, "!sticker", { chat: GROUP, image: true });
   const { mimetype, data } = sent[0]?.content as { mimetype: string; data: string };
+  const webp = Buffer.from(data, "base64");
   expect(sent.map((s) => s.chatId)).toEqual([GROUP]);
   expect(mimetype).toBe("image/webp");
-  expect(Buffer.from(data, "base64").toString("latin1", 8, 12)).toBe("WEBP");
+  expect(webp.toString("latin1", 8, 16)).toBe("WEBPVP8X");
+  expect([webp.readUIntLE(24, 3) + 1, webp.readUIntLE(27, 3) + 1]).toEqual([512, 512]);
   expect(errors).toEqual([]);
 }, 30_000);
 
