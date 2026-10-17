@@ -63,7 +63,8 @@ function webpSeconds(data: Buffer) {
   return ms / 1000;
 }
 
-// Si no cabe, baja primero la calidad y luego el tamaño; los fps nunca
+// Si no cabe, baja primero la calidad y luego el tamaño; los fps nunca. Pasar de 75 a 45 quita
+// un 22 % del peso (medido) y el resto lo cubre el lado: el peso crece con él elevado a ~1,5
 export const toSticker = (media: Media, ratio?: Ratio) =>
   limited(() =>
     withTemp(async (dir) => {
@@ -72,17 +73,17 @@ export const toSticker = (media: Media, ratio?: Ratio) =>
       await writeFile(input, media.data);
       const native = media.mimetype === "image/webp";
       const clip = /^video\/|^image\/gif/.test(media.mimetype);
-      const limit =
-        clip || (native && media.data.includes("ANIM")) ? MAX_BYTES.animated : MAX_BYTES.still;
+      const seconds = native ? webpSeconds(media.data) : 0;
+      const limit = clip || seconds > 0 ? MAX_BYTES.animated : MAX_BYTES.still;
       const probe = ["-show_entries", "stream=width,height", "-of", "csv=p=0", input];
       const sizes = native ? (await run("ffprobe", probe)).split(",").map(Number) : [];
       const small = media.data.length <= limit && Math.max(...sizes) <= SIZE;
-      if (native && !ratio && small && webpSeconds(media.data) <= MAX_SECONDS) return media;
+      if (native && !ratio && small && seconds <= MAX_SECONDS) return media;
       const [w, h] = ratio ?? [];
       const crop = ratio ? [`crop='min(iw,ih*${w}/${h})':'min(ih,iw*${h}/${w})'`] : [];
       let side = native ? Math.min(SIZE, Math.max(...sizes)) : SIZE;
       let size = 0;
-      for (const quality of [75, 45, 30, 30, 30, 30]) {
+      for (const quality of [75, 45, 45, 45]) {
         const box = native ? `'min(${side},iw)':'min(${side},ih)'` : `${side}:${side}`;
         const pad = native ? "max(iw\\,ih)" : side;
         const scale = `scale=${box}:force_original_aspect_ratio=decrease:flags=lanczos`;
@@ -93,7 +94,8 @@ export const toSticker = (media: Media, ratio?: Ratio) =>
         await ffmpeg(["-i", input, ...args, "-loop", "0", output]);
         size = (await stat(output)).size;
         if (size <= limit) break;
-        if (quality === 30) side = Math.floor(side * Math.sqrt(limit / size) * 0.9);
+        const next = quality === 75 ? 0.78 : 1;
+        side = Math.floor(side * Math.min(1, (limit / (size * next)) ** (2 / 3) * 0.9));
       }
       if (size > limit) throw botError("sticker_size", `No cabe en ${limit / 1024} KB`);
       return { data: await readFile(output), mimetype: "image/webp" };
