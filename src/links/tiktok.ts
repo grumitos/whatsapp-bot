@@ -12,7 +12,7 @@ const APP = { aid: "1233", app_name: "musical_ly", device_platform: "android" };
 type Sizes = Record<string, { url_list?: string[] } | undefined>;
 type Img = Record<"origin_url" | "crop_url", { url_list?: string[] } | undefined>;
 type Sticker = { animated_url?: Sizes; static_url?: Sizes };
-type Attachments = { cmt_sticker_struct?: Sticker; image_list?: Img[] };
+type Attachments = { cmt_sticker_struct?: Sticker; image_list?: Img[] | null };
 type Comment = Attachments & { cid: string; reply_comment?: Comment[] };
 type Page = { status_code: number; comments?: Comment[]; has_more?: number; cursor?: number };
 type Post = { images?: string[]; play?: string; hdplay?: string };
@@ -26,8 +26,9 @@ const best = (sizes?: Sizes) =>
     .map((size) => sizes?.[`${size}_resolution_url`]?.url_list?.[0])
     .find(Boolean);
 
-function commentMedia({ cmt_sticker_struct: sticker, image_list: images = [] }: Attachments) {
-  const photos = images.map((image) => (image.origin_url ?? image.crop_url)?.url_list ?? []);
+// Un comentario con sticker trae image_list: null, y el valor por defecto no cubre null
+function commentMedia({ cmt_sticker_struct: sticker, image_list: images }: Attachments) {
+  const photos = (images ?? []).map((image) => (image.origin_url ?? image.crop_url)?.url_list ?? []);
   const jpeg = photos.map((urls) => urls.find((url) => /\.jpe?g(\?|$)/i.test(url)) ?? urls[0]);
   return items([best(sticker?.animated_url) ?? best(sticker?.static_url), ...jpeg]);
 }
