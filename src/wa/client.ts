@@ -12,16 +12,25 @@ declare global {
   }
 }
 
+const windows = process.platform === "win32";
+
 function headlessShell() {
   const name = "chrome-headless-shell";
   const dir = join(ROOT, ".chrome", name);
   const versions = existsSync(dir) ? readdirSync(dir) : [];
   versions.sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
-  const exes = versions.map((version) => join(dir, version, `${name}-win64`, `${name}.exe`));
+  const folder = `${name}-${windows ? "win64" : "linux64"}`;
+  const file = windows ? `${name}.exe` : name;
+  const exes = versions.map((version) => join(dir, version, folder, file));
   return exes.filter((exe) => existsSync(exe)).pop();
 }
 
-const shell = headlessShell();
+// CHROME_PATH manda; si no, el headless shell de .chrome/ y por último el Chrome del sistema
+const forced = process.env.CHROME_PATH;
+const shell = forced ? undefined : headlessShell();
+const system = windows
+  ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+  : ["/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser"].find(existsSync);
 const cache = shell ? [`--disk-cache-dir=${join(ROOT, ".wwebjs_cache", "http")}`] : [];
 const lean = ["--disable-gpu", "--disable-component-update", "--disable-domain-reliability"];
 const isolation = ["--no-sandbox", "--disable-site-isolation-trials", "--no-default-browser-check"];
@@ -30,7 +39,7 @@ const procs = "--disable-features=site-per-process,IsolateOrigins,SpareRendererF
 export const client = new pkg.Client({
   authStrategy: new pkg.LocalAuth({ clientId: "sticker-bot" }),
   puppeteer: {
-    executablePath: shell ?? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    executablePath: forced || shell || system,
     headless: shell ? "shell" : true,
     args: [...lean, ...isolation, procs, ...cache],
   },

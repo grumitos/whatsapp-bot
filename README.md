@@ -14,14 +14,14 @@ Bot de WhatsApp en TypeScript sobre Bun, con whatsapp-web.js.
 - Bun
 - ffmpeg en el `PATH`
 - yt-dlp en el `PATH`, para los videos de X
-- Chrome, o `chrome-headless-shell` en `.chrome/`
+- Chrome o Chromium (o su ruta en `CHROME_PATH`), o `chrome-headless-shell` en `.chrome/`
 - Opcional: una clave de Anthropic para la IA
 
 ## Uso
 
 1. Copia `config.example.json` como `config.json` y complétalo.
 2. Para la IA, copia `.env.example` como `.env` y pon la clave.
-3. Ejecuta `run.bat` y escanea el QR con WhatsApp.
+3. Ejecuta `run.bat` (Windows) o `./run.sh` (Linux) y escanea el QR con WhatsApp.
 
 ## Desarrollo
 
