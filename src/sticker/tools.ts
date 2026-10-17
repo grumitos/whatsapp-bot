@@ -20,7 +20,7 @@ const ATTEMPTS = [
   { fps: 5, quality: 10, minRatio: 0.11 },
 ];
 
-// Un sticker animado ya viene a su medida: fps 0 conserva los del original y solo baja la calidad
+// Un WebP ya viene a su medida: fps 0 conserva los del original y solo baja la calidad
 const NATIVE = [
   { fps: 0, quality: 60, minRatio: 1 },
   { fps: 0, quality: 35, minRatio: 0.7 },
@@ -65,20 +65,20 @@ async function limited<T>(task: () => Promise<T>) {
   }
 }
 
-const isAnimated = ({ mimetype, data }: Media) =>
-  /^video\/|^image\/gif/.test(mimetype) || (mimetype === "image/webp" && data.includes("ANIM"));
+const isAnimated = ({ mimetype }: Media) => /^video\/|^image\/gif/.test(mimetype);
 
-const isAnimatedWebp = (media: Media) => media.mimetype === "image/webp" && isAnimated(media);
-
-const convert = (media: Media, ratio?: Ratio) =>
+export const toSticker = (media: Media, ratio?: Ratio) =>
   limited(() =>
     withTemp(async (dir) => {
       const input = join(dir, "input");
       const output = join(dir, "sticker.webp");
       await writeFile(input, media.data);
+      const native = media.mimetype === "image/webp";
+      const probe = ["-show_entries", "stream=width,height", "-of", "csv=p=0", input];
+      const sizes = native ? (await run("ffprobe", probe)).split(",").map(Number) : [];
+      if (native && !ratio && Math.max(...sizes) <= SIZE) return media;
       const [w, h] = ratio ?? [];
       const crop = ratio ? [`crop='min(iw,ih*${w}/${h})':'min(ih,iw*${h}/${w})'`] : [];
-      const native = isAnimatedWebp(media);
       const box = native ? [`'min(${SIZE},iw)'`, `'min(${SIZE},ih)'`] : [SIZE, SIZE];
       const side = native ? "max(iw\\,ih)" : SIZE;
       const scale = `scale=${box.join(":")}:force_original_aspect_ratio=decrease:flags=lanczos`;
@@ -100,6 +100,3 @@ const convert = (media: Media, ratio?: Ratio) =>
       return { data: await readFile(output), mimetype: "image/webp" };
     }),
   );
-
-export const toSticker = async (media: Media, ratio?: Ratio) =>
-  isAnimatedWebp(media) && !ratio ? media : convert(media, ratio);
