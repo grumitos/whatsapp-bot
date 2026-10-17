@@ -2,29 +2,15 @@ import { execFile } from "child_process";
 import { mkdtemp, readFile, rm, stat, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
+import { botError } from "../log.ts";
 import type { Media } from "../wa/media.ts";
 
 export const SIZE = 512;
-export const MAX_SECONDS = 8;
+// Límites de WhatsApp por sticker: 500 KB animado, 100 KB estático y 10 s en total (con margen)
+export const MAX_SECONDS = 9.5;
 export type Ratio = [number, number];
-const MAX_BYTES = 500 * 1024;
+const MAX_BYTES = { animated: 500 * 1024, still: 100 * 1024 };
 const PARALLEL = 4;
-
-// De mayor a menor calidad hasta que quepa; minRatio salta los intentos que no cabrían
-const ATTEMPTS = [
-  { fps: 15, quality: 60, minRatio: 1 },
-  { fps: 12, quality: 35, minRatio: 0.46 },
-  { fps: 10, quality: 30, minRatio: 0.35 },
-  { fps: 8, quality: 25, minRatio: 0.25 },
-  { fps: 6, quality: 20, minRatio: 0.17 },
-  { fps: 5, quality: 10, minRatio: 0.11 },
-];
-
-// Un WebP ya viene a su medida: fps 0 conserva los del original y solo baja la calidad
-const NATIVE = [
-  { fps: 0, quality: 60, minRatio: 1 },
-  { fps: 0, quality: 35, minRatio: 0.7 },
-];
 
 const waiters: (() => void)[] = [];
 let active = 0;
@@ -65,8 +51,19 @@ async function limited<T>(task: () => Promise<T>) {
   }
 }
 
-const isAnimated = ({ mimetype }: Media) => /^video\/|^image\/gif/.test(mimetype);
+// ffprobe no informa la duración de un WebP animado: se suma la de cada cuadro (ANMF)
+function webpSeconds(data: Buffer) {
+  let ms = 0;
+  let at = 12;
+  while (at + 8 <= data.length) {
+    const size = data.readUInt32LE(at + 4);
+    if (data.toString("ascii", at, at + 4) === "ANMF") ms += data.readUIntLE(at + 20, 3);
+    at += 8 + size + (size % 2);
+  }
+  return ms / 1000;
+}
 
+// Si no cabe, baja primero la calidad y luego el tamaño; los fps nunca
 export const toSticker = (media: Media, ratio?: Ratio) =>
   limited(() =>
     withTemp(async (dir) => {
@@ -74,29 +71,31 @@ export const toSticker = (media: Media, ratio?: Ratio) =>
       const output = join(dir, "sticker.webp");
       await writeFile(input, media.data);
       const native = media.mimetype === "image/webp";
+      const clip = /^video\/|^image\/gif/.test(media.mimetype);
+      const limit =
+        clip || (native && media.data.includes("ANIM")) ? MAX_BYTES.animated : MAX_BYTES.still;
       const probe = ["-show_entries", "stream=width,height", "-of", "csv=p=0", input];
       const sizes = native ? (await run("ffprobe", probe)).split(",").map(Number) : [];
-      if (native && !ratio && Math.max(...sizes) <= SIZE) return media;
+      const small = media.data.length <= limit && Math.max(...sizes) <= SIZE;
+      if (native && !ratio && small && webpSeconds(media.data) <= MAX_SECONDS) return media;
       const [w, h] = ratio ?? [];
       const crop = ratio ? [`crop='min(iw,ih*${w}/${h})':'min(ih,iw*${h}/${w})'`] : [];
-      const box = native ? [`'min(${SIZE},iw)'`, `'min(${SIZE},ih)'`] : [SIZE, SIZE];
-      const side = native ? "max(iw\\,ih)" : SIZE;
-      const scale = `scale=${box.join(":")}:force_original_aspect_ratio=decrease:flags=lanczos`;
-      const pad = `pad=${side}:${side}:(ow-iw)/2:(oh-ih)/2:color=0x00000000`;
-      const rate = (fps: number) => (fps ? [`fps=${fps}`] : []);
-      const filters = (fps = 0) => [...crop, ...rate(fps), scale, "format=rgba", pad].join(",");
-      const attempts = native ? [...NATIVE, ...ATTEMPTS] : isAnimated(media) ? ATTEMPTS : [];
-      if (!attempts.length) await ffmpeg(["-i", input, "-vf", filters(), output]);
-      let first = 0;
-      for (const [i, { fps, quality, minRatio }] of attempts.entries()) {
-        if (first * minRatio > MAX_BYTES && i < attempts.length - 1) continue;
+      let side = native ? Math.min(SIZE, Math.max(...sizes)) : SIZE;
+      let size = 0;
+      for (const quality of [75, 45, 30, 30, 30, 30]) {
+        const box = native ? `'min(${side},iw)':'min(${side},ih)'` : `${side}:${side}`;
+        const pad = native ? "max(iw\\,ih)" : side;
+        const scale = `scale=${box}:force_original_aspect_ratio=decrease:flags=lanczos`;
+        const filters = [...crop, ...(clip ? ["fps=15"] : []), scale, "format=rgba"];
+        filters.push(`pad=${pad}:${pad}:(ow-iw)/2:(oh-ih)/2:color=0x00000000`);
         const encode = ["-c:v", "libwebp", "-q:v", String(quality), "-compression_level", "2"];
-        const args = ["-t", String(MAX_SECONDS), "-vf", filters(fps), ...encode];
+        const args = ["-t", String(MAX_SECONDS), "-vf", filters.join(","), ...encode];
         await ffmpeg(["-i", input, ...args, "-loop", "0", output]);
-        const size = (await stat(output)).size;
-        first ||= size;
-        if (size <= MAX_BYTES) break;
+        size = (await stat(output)).size;
+        if (size <= limit) break;
+        if (quality === 30) side = Math.floor(side * Math.sqrt(limit / size) * 0.9);
       }
+      if (size > limit) throw botError("sticker_size", `No cabe en ${limit / 1024} KB`);
       return { data: await readFile(output), mimetype: "image/webp" };
     }),
   );
