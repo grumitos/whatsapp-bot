@@ -6,7 +6,7 @@ Bot de WhatsApp en TypeScript sobre Bun, con whatsapp-web.js.
 
 - `!sticker`: convierte en sticker una imagen, un GIF, un video, un álbum, un texto o un enlace de TikTok o X. `!sticker 1:1` recorta antes.
 - Respuestas fijas de texto, sticker o audio, definidas en `config.json`.
-- `!conciencia`: conversación con IA (Anthropic), con memoria y tope de gasto diario.
+- `!consciencia`: conversación con IA (Anthropic), con memoria y tope de gasto diario.
 - Permisos y límites de uso por grupo y por persona.
 
 ## Requisitos
