@@ -20,6 +20,12 @@ const ATTEMPTS = [
   { fps: 5, quality: 10, minRatio: 0.11 },
 ];
 
+// Un sticker animado ya viene a su medida: fps 0 conserva los del original y solo baja la calidad
+const NATIVE = [
+  { fps: 0, quality: 60, minRatio: 1 },
+  { fps: 0, quality: 35, minRatio: 0.7 },
+];
+
 const waiters: (() => void)[] = [];
 let active = 0;
 
@@ -62,7 +68,9 @@ async function limited<T>(task: () => Promise<T>) {
 const isAnimated = ({ mimetype, data }: Media) =>
   /^video\/|^image\/gif/.test(mimetype) || (mimetype === "image/webp" && data.includes("ANIM"));
 
-export const toSticker = (media: Media, ratio?: Ratio) =>
+const isAnimatedWebp = (media: Media) => media.mimetype === "image/webp" && isAnimated(media);
+
+const convert = (media: Media, ratio?: Ratio) =>
   limited(() =>
     withTemp(async (dir) => {
       const input = join(dir, "input");
@@ -70,16 +78,20 @@ export const toSticker = (media: Media, ratio?: Ratio) =>
       await writeFile(input, media.data);
       const [w, h] = ratio ?? [];
       const crop = ratio ? [`crop='min(iw,ih*${w}/${h})':'min(ih,iw*${h}/${w})'`] : [];
-      const scale = `scale=${SIZE}:${SIZE}:force_original_aspect_ratio=decrease:flags=lanczos`;
-      const pad = `pad=${SIZE}:${SIZE}:(ow-iw)/2:(oh-ih)/2:color=0x00000000`;
-      const filters = (fps: string[]) => [...crop, ...fps, scale, "format=rgba", pad].join(",");
-      const attempts = isAnimated(media) ? ATTEMPTS : [];
-      if (!attempts.length) await ffmpeg(["-i", input, "-vf", filters([]), output]);
+      const native = isAnimatedWebp(media);
+      const box = native ? [`'min(${SIZE},iw)'`, `'min(${SIZE},ih)'`] : [SIZE, SIZE];
+      const side = native ? "max(iw\\,ih)" : SIZE;
+      const scale = `scale=${box.join(":")}:force_original_aspect_ratio=decrease:flags=lanczos`;
+      const pad = `pad=${side}:${side}:(ow-iw)/2:(oh-ih)/2:color=0x00000000`;
+      const rate = (fps: number) => (fps ? [`fps=${fps}`] : []);
+      const filters = (fps = 0) => [...crop, ...rate(fps), scale, "format=rgba", pad].join(",");
+      const attempts = native ? [...NATIVE, ...ATTEMPTS] : isAnimated(media) ? ATTEMPTS : [];
+      if (!attempts.length) await ffmpeg(["-i", input, "-vf", filters(), output]);
       let first = 0;
       for (const [i, { fps, quality, minRatio }] of attempts.entries()) {
         if (first * minRatio > MAX_BYTES && i < attempts.length - 1) continue;
         const encode = ["-c:v", "libwebp", "-q:v", String(quality), "-compression_level", "2"];
-        const args = ["-t", String(MAX_SECONDS), "-vf", filters([`fps=${fps}`]), ...encode];
+        const args = ["-t", String(MAX_SECONDS), "-vf", filters(fps), ...encode];
         await ffmpeg(["-i", input, ...args, "-loop", "0", output]);
         const size = (await stat(output)).size;
         first ||= size;
@@ -88,3 +100,6 @@ export const toSticker = (media: Media, ratio?: Ratio) =>
       return { data: await readFile(output), mimetype: "image/webp" };
     }),
   );
+
+export const toSticker = async (media: Media, ratio?: Ratio) =>
+  isAnimatedWebp(media) && !ratio ? media : convert(media, ratio);
