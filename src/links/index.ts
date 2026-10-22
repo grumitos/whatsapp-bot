@@ -1,5 +1,6 @@
 import type { Media } from "../wa/media.ts";
 import { guardedFetch } from "./guard.ts";
+import { INSTAGRAM_HOSTS, isInstagramPost, resolveInstagram } from "./instagram.ts";
 import { TIKTOK_HOSTS, resolveTiktok } from "./tiktok.ts";
 import { TWITTER_HOSTS, isTwitterPost, resolveTwitter } from "./twitter.ts";
 
@@ -10,6 +11,7 @@ export type Link = { provider: Provider; url: string };
 const PROVIDERS: (Provider & { accepts?: (url: URL) => boolean })[] = [
   { name: "TikTok", hosts: TIKTOK_HOSTS, resolve: resolveTiktok },
   { name: "Twitter/X", hosts: TWITTER_HOSTS, accepts: isTwitterPost, resolve: resolveTwitter },
+  { name: "Instagram", hosts: INSTAGRAM_HOSTS, accepts: isInstagramPost, resolve: resolveInstagram },
 ];
 
 const VIDEO_BYTES = 50 * 1024 * 1024;
