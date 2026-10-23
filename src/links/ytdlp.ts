@@ -2,7 +2,7 @@ import { SIZE, run } from "../sticker/tools.ts";
 import { USER_AGENT } from "./guard.ts";
 
 type Format = { url: string; vcodec?: string; width?: number; height?: number; tbr?: number };
-export type Info = { _type?: string; entries?: Info[]; formats?: Format[] };
+type Info = { _type?: string; entries?: Info[]; formats?: Format[] };
 
 // El motivo es la última línea con "ERROR:" de la salida de yt-dlp, sin ese prefijo
 export function ytDlpReason(err: Error) {
@@ -13,8 +13,8 @@ export function ytDlpReason(err: Error) {
 export async function ytDlp(link: string) {
   const flags = ["--dump-single-json", "--no-playlist", "--no-warnings", "--ignore-config"];
   const args = [...flags, "--socket-timeout", "15", "--user-agent", USER_AGENT, link];
-  const ytDlp = process.env.YT_DLP || "yt-dlp";
-  return JSON.parse(await run(ytDlp, args, 60_000)) as Info;
+  const bin = process.env.YT_DLP || "yt-dlp";
+  return JSON.parse(await run(bin, args, 60_000)) as Info;
 }
 
 // El formato con imagen más liviano que cubra el sticker o, si ninguno llega, el más grande

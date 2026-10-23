@@ -63,6 +63,16 @@ function webpSeconds(data: Buffer) {
   return ms / 1000;
 }
 
+// Con x:x se recorta lo visible, como en cualquier imagen con transparencia: las bandas de un
+// sticker o de un PNG no cuentan. Con reset=0, cropdetect da el área mayor de todos los cuadros
+async function visible(input: string) {
+  const find = "format=rgba,alphaextract,cropdetect=skip=0:round=2:reset=0,metadata=print:file=-";
+  const log = await ffmpeg(["-i", input, "-vf", find, "-f", "null", "-"]);
+  const box: Record<string, number> = {};
+  for (const [, key, value] of log.matchAll(/cropdetect\.(\w)=(-?\d+)/g)) box[key!] = Number(value);
+  return box.w! > 0 && box.h! > 0 ? [`crop=${box.w}:${box.h}:${box.x}:${box.y}`] : [];
+}
+
 // Si no cabe, baja primero la calidad y luego el tamaño; los fps nunca. Pasar de 75 a 45 quita
 // un 22 % del peso (medido) y el resto lo cubre el lado: el peso crece con él elevado a ~1,5
 export const toSticker = (media: Media, ratio?: Ratio) =>
@@ -80,7 +90,8 @@ export const toSticker = (media: Media, ratio?: Ratio) =>
       const small = media.data.length <= limit && Math.max(...sizes) <= SIZE;
       if (native && !ratio && small && seconds <= MAX_SECONDS) return media;
       const [w, h] = ratio ?? [];
-      const crop = ratio ? [`crop='min(iw,ih*${w}/${h})':'min(ih,iw*${h}/${w})'`] : [];
+      const area = ratio && /^image\/(webp|png)$/.test(media.mimetype) ? await visible(input) : [];
+      const crop = ratio ? [...area, `crop='min(iw,ih*${w}/${h})':'min(ih,iw*${h}/${w})'`] : [];
       let side = native ? Math.min(SIZE, Math.max(...sizes)) : SIZE;
       let size = 0;
       for (const quality of [75, 45, 45, 45]) {

@@ -17,7 +17,7 @@ export async function guardedFetch(link: string | URL, hosts: string[], options:
   let url = new URL(link);
   for (let hops = 0; ; hops++) {
     if (!allowed(url, hosts)) throw botError("link_host", `Dominio no permitido: ${url.origin}`);
-    if (stop?.(url)) return { url, data: Buffer.alloc(0), type: "" };
+    if (stop?.(url)) return { url, data: Buffer.alloc(0), type: "", headers: new Headers() };
     const signal = AbortSignal.timeout(timeout);
     const res = await fetch(url, { headers, redirect: "manual", signal });
     const location = res.status >= 300 && res.status < 400 && res.headers.get("location");
@@ -36,7 +36,8 @@ export async function guardedFetch(link: string | URL, hosts: string[], options:
       if (size > maxBytes) throw tooBig();
       chunks.push(chunk);
     }
-    return { url, data: Buffer.concat(chunks), type: res.headers.get("content-type") ?? "" };
+    const type = res.headers.get("content-type") ?? "";
+    return { url, data: Buffer.concat(chunks), type, headers: res.headers };
   }
 }
 

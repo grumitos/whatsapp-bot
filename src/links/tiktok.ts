@@ -1,4 +1,4 @@
-import { botError } from "../log.ts";
+import { botError, log } from "../log.ts";
 import { fetchJson, guardedFetch } from "./guard.ts";
 import type { LinkItem } from "./index.ts";
 
@@ -17,6 +17,11 @@ type Comment = Attachments & { cid: string; reply_comment?: Comment[] };
 type Page = { status_code: number; comments?: Comment[]; has_more?: number; cursor?: number };
 type Post = { images?: string[]; play?: string; hdplay?: string };
 type Tikwm = { code: number; msg?: string; data?: Post };
+type Photo = { imageURL?: { urlList?: string[] } };
+type Web = { video?: { playAddr?: string }; imagePost?: { images?: Photo[] } };
+
+// El video sale de *.tiktok.com y las fotos de tiktokcdn; tikwm no recibe estas cookies
+const WEB_HOSTS = [...TIKTOK_HOSTS, ...MEDIA_HOSTS.filter((host) => host !== "tikwm.com")];
 
 const items = (urls: (string | undefined)[]): LinkItem[] =>
   urls.flatMap((url) => (url ? [{ url, hosts: MEDIA_HOSTS }] : [])).slice(0, 10);
@@ -26,11 +31,36 @@ const best = (sizes?: Sizes) =>
     .map((size) => sizes?.[`${size}_resolution_url`]?.url_list?.[0])
     .find(Boolean);
 
+const jpeg = (urls: string[]) => urls.find((url) => /\.jpe?g(\?|$)/i.test(url)) ?? urls[0];
+
+// El post viene en un JSON de la página; el CDN pide sus cookies y el Referer de TikTok
+function webItems(json: string | undefined, cookie: string): LinkItem[] {
+  const detail = json ? JSON.parse(json).__DEFAULT_SCOPE__?.["webapp.video-detail"] : undefined;
+  const post: Web | undefined = detail?.itemInfo?.itemStruct;
+  const photos = (post?.imagePost?.images ?? []).map((i) => jpeg(i.imageURL?.urlList ?? []));
+  const urls = photos.length ? photos : [post?.video?.playAddr];
+  const headers = { Cookie: cookie, Referer: "https://www.tiktok.com/" };
+  const media = urls.flatMap((url) => (url ? [{ url, hosts: WEB_HOSTS, headers }] : []));
+  if (!media.length) {
+    throw botError("tiktok", `La página no trae el post: ${detail?.statusCode ?? "sin datos"}`);
+  }
+  return media.slice(0, 10);
+}
+
+// Más rápido y estable que tikwm. La página /photo/ no trae el post; la /video/ con el mismo id, sí
+async function fromWeb(url: URL) {
+  const page = url.href.replace("/photo/", "/video/");
+  const { data, headers } = await guardedFetch(page, TIKTOK_HOSTS, { timeout: 8000 });
+  const html = data.toString("utf8");
+  const found = html.match(/id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([\s\S]*?)<\/script>/);
+  const cookie = headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
+  return webItems(found?.[1], cookie);
+}
+
 // Un comentario con sticker trae image_list: null, y el valor por defecto no cubre null
 function commentMedia({ cmt_sticker_struct: sticker, image_list: images }: Attachments) {
   const photos = (images ?? []).map((image) => (image.origin_url ?? image.crop_url)?.url_list ?? []);
-  const jpeg = photos.map((urls) => urls.find((url) => /\.jpe?g(\?|$)/i.test(url)) ?? urls[0]);
-  return items([best(sticker?.animated_url) ?? best(sticker?.static_url), ...jpeg]);
+  return items([best(sticker?.animated_url) ?? best(sticker?.static_url), ...photos.map(jpeg)]);
 }
 
 // insert_ids pone el comentario primero; si TikTok dejara de respetarlo, se busca por páginas
@@ -60,6 +90,8 @@ export async function resolveTiktok(link: string) {
     if (!media.length) throw botError("tiktok", "El comentario no existe o no tiene un adjunto");
     return media;
   }
+  const found = await fromWeb(url).catch((err) => log.warn("TikTok: se usa tikwm", err));
+  if (found) return found;
   const query = new URLSearchParams({ url: post ? url.origin + url.pathname : url.href, hd: "1" });
   const api = `https://www.tikwm.com/api/?${query}`;
   const payload = await fetchJson<Tikwm>(api, MEDIA_HOSTS);
