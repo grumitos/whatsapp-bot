@@ -8,6 +8,7 @@ import { tick } from "./ai/memory.ts";
 import { catchUp, onMessage } from "./bot/handle.ts";
 import { updateMembers } from "./bot/members.ts";
 import { client, connectionState } from "./wa/client.ts";
+import { enableSoundStickers } from "./wa/send.ts";
 
 const inFlight = new Set<Promise<unknown>>();
 let restarting = false;
@@ -40,6 +41,12 @@ client.on("qr", (qr: string) => {
 
 client.on("authenticated", () => log.info("Sesión iniciada."));
 client.on("message_create", (msg) => !restarting && track(onMessage(msg)));
+client.on("change_state", (state) => {
+  if (!restarting && state === "CONNECTED") {
+    track(catchUp());
+    setTimeout(() => !restarting && track(catchUp()), 5000);
+  }
+});
 client.on("group_join", () => track(updateMembers()));
 client.on("group_leave", () => track(updateMembers()));
 client.on("disconnected", (reason) => restart(`Se perdió la conexión con WhatsApp (${reason})`));
@@ -50,14 +57,23 @@ for (const event of ["uncaughtException", "unhandledRejection"])
 
 client.once("ready", () => {
   log.ok("Bot listo.");
+  track(enableSoundStickers());
   track(updateMembers());
   track(catchUp());
   void check();
   let failed = 0;
+  let lastTick = Date.now();
   setInterval(async () => {
+    const now = Date.now();
+    const jumped = now - lastTick > 75_000;
+    lastTick = now;
     const timeout = Bun.sleep(30_000).then(() => "sin respuesta");
     const state = await Promise.race([connectionState(), timeout]).catch((e) => `error: ${e}`);
     failed = state === "CONNECTED" ? 0 : failed + 1;
+    if (state === "CONNECTED" && !restarting) {
+      track(catchUp());
+      if (jumped) setTimeout(() => !restarting && track(catchUp()), 5000);
+    }
     if (failed >= 3)
       void restart(`WhatsApp no está conectado desde hace ${failed} minutos (${state})`);
   }, 60_000);

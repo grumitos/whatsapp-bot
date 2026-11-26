@@ -5,22 +5,42 @@ import { client, lidAndPhone, page } from "./client.ts";
 import type { MediaData } from "./media.ts";
 
 type Wid = string | { user: string; server: string } | undefined;
-type Key = { fromMe: boolean; remote: Wid; id: string; participant?: Wid };
+type Key = {
+  fromMe: boolean;
+  remote: Wid;
+  id: string;
+  participant?: Wid;
+  _serialized?: string;
+  $1?: string;
+};
 type Quote = { quotedMsg?: MediaData; quotedStanzaID?: string; quotedParticipant?: Wid };
-export type Raw = MediaData & Quote & { id: Key; from: Wid; to: Wid; author?: Wid; t?: number };
+export type Raw = MediaData &
+  Quote & {
+    id: Key;
+    from: Wid;
+    to: Wid;
+    author?: Wid;
+    t?: number;
+    parentMsgKey?: string | Key;
+    viewMode?: string;
+    associationType?: string;
+  };
 export type Sender = { id: string; phone: string | null; key: string };
 
 const LOOKUP_MS = 10_000;
 const phones = new Map<string, string | null>();
 let selfLid: string | undefined;
 
-export const rawOf = (msg: Message) => msg.rawData as Raw & { parentMsgKey?: string | Key };
+export const rawOf = (msg: Message) => msg.rawData as Raw;
 
-// Los ids de WhatsApp Web no traen _serialized: se arman con sus partes
 export const widOf = (w: Wid) => (typeof w === "object" ? `${w.user}@${w.server}` : (w ?? ""));
 
-export const messageId = ({ fromMe, remote, id, participant }: Key) =>
+// Clave persistida para recuperar mensajes y elementos ya procesados.
+export const messageKey = ({ fromMe, remote, id, participant }: Key) =>
   [fromMe, widOf(remote), id, ...(participant ? [widOf(participant)] : [])].join("_");
+
+// WhatsApp Web también serializa su id completo en $1.
+export const messageId = (key: Key) => key._serialized ?? key.$1 ?? messageKey(key);
 
 export const chatOf = (raw: Raw) => widOf(raw.id.fromMe ? raw.to : raw.from);
 export const isGroup = (chatId: string) => chatId.endsWith("@g.us");

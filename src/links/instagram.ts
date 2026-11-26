@@ -2,7 +2,7 @@ import { botError, log } from "../log.ts";
 import { SIZE } from "../sticker/tools.ts";
 import { guardedFetch } from "./guard.ts";
 import type { LinkItem } from "./index.ts";
-import { pickVideo, ytDlp, ytDlpReason } from "./ytdlp.ts";
+import { pickVideos, ytDlp, ytDlpReason } from "./ytdlp.ts";
 
 export const INSTAGRAM_HOSTS = ["instagram.com"];
 const MEDIA_HOSTS = ["cdninstagram.com", "fbcdn.net"];
@@ -65,7 +65,7 @@ export async function resolveInstagram(link: string): Promise<LinkItem[]> {
   const found = await fromEmbed(code).catch((err) => log.warn("Sin datos del embed de Instagram", err));
   if (found?.length) return found.slice(0, 10);
   const info = await ytDlp(link).catch((err) => Promise.reject(ytDlpError(err)));
-  const url = pickVideo(info, fromCdn);
-  if (!url) throw botError("instagram", NO_MEDIA);
-  return [item(url)];
+  const urls = pickVideos(info, fromCdn);
+  if (!urls.length) throw botError("instagram", NO_MEDIA);
+  return urls.slice(0, 10).map(item);
 }

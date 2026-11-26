@@ -3,12 +3,13 @@ import { botError } from "../log.ts";
 export const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) " +
   "Chrome/146.0.0.0 Safari/537.36";
+export const LINK_MEDIA_BYTES = 50 * 1024 * 1024;
 
 type Options = { maxBytes?: number; timeout?: number; headers?: Record<string, string> };
 
 type Guarded = Options & { stop?: (url: URL) => boolean };
 
-const allowed = ({ protocol, port, hostname }: URL, hosts: string[]) =>
+export const allowed = ({ protocol, port, hostname }: URL, hosts: string[]) =>
   protocol === "https:" && !port && hosts.some((h) => hostname === h || hostname.endsWith(`.${h}`));
 
 export async function guardedFetch(link: string | URL, hosts: string[], options: Guarded = {}) {

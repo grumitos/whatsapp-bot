@@ -5,16 +5,26 @@ import words from "./words.json" with { type: "json" };
 const SECTIONS = ["textReplies", "quickReplies", "stickers", "audios"] as const;
 
 export type Command =
-  | { kind: "sticker" | "celebrate" | "conversation" | "status"; value?: undefined }
+  | {
+      kind:
+        | "sticker"
+        | "audioSticker"
+        | "clip"
+        | "video"
+        | "audio"
+        | "celebrate"
+        | "conversation"
+        | "status";
+      value?: undefined;
+    }
   | { kind: (typeof SECTIONS)[number]; value: string };
 
-export type Match = { command: Command; rest: string };
 type Entry = { alias: string; command: Command };
 
 // "!" y la palabra pegada; también "!#" suelto (así "!#1" y el emoji "#️⃣" no cuentan)
 const PATTERN = /!([\p{L}\p{N}]+|#(?![\p{L}\p{N}\p{M}]))/gu;
 const BUILT_IN = { ...words, status: ["estado"] };
-let cache: { source: typeof config; find: (body: string) => Match | null } | undefined;
+let cache: { source: typeof config; find: (body: string) => Command | null } | undefined;
 
 export function normalize(text: string) {
   const lower = text.toLowerCase();
@@ -39,7 +49,7 @@ const matcher = (entries: Entry[]) => (body: string) => {
     const typo = (w: string) =>
       entries.find((e) => e.alias.length >= 6 && withinOneEdit(w, e.alias));
     const hit = exact(word) ?? exact(singular) ?? typo(word) ?? typo(singular);
-    if (hit) return { command: hit.command, rest: text.slice(found.index + found[0].length) };
+    if (hit) return hit.command;
   }
   return null;
 };

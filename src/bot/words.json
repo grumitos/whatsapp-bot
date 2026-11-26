@@ -31,6 +31,30 @@
     "autocollant",
     "decal"
   ],
+  "audioSticker": [
+    "sa",
+    "saudio",
+    "stickeraudio",
+    "audiosticker",
+    "stickersonido",
+    "stickersound",
+    "soundsticker"
+  ],
+  "clip": [
+    "clip",
+    "cortar",
+    "corte",
+    "recortar"
+  ],
+  "video": [
+    "video",
+    "vid"
+  ],
+  "audio": [
+    "audio",
+    "mp3",
+    "musica"
+  ],
   "celebrate": [
     "celebrar",
     "celebremos",

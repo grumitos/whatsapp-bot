@@ -1,11 +1,15 @@
 import type { Media } from "../wa/media.ts";
-import { guardedFetch } from "./guard.ts";
+import { guardedFetch, LINK_MEDIA_BYTES } from "./guard.ts";
 import { INSTAGRAM_HOSTS, isInstagramPost, resolveInstagram } from "./instagram.ts";
 import { TIKTOK_HOSTS, resolveTiktok } from "./tiktok.ts";
 import { TWITTER_HOSTS, isTwitterPost, resolveTwitter } from "./twitter.ts";
 
 // headers: lo que el CDN exige para entregar el archivo (cookies de la página, Referer)
-export type LinkItem = { url: string; hosts: string[]; headers?: Record<string, string> };
+type MediaKind = "audio" | "video";
+export type MediaSource =
+  | { url: string; hosts: string[]; headers?: Record<string, string> }
+  | { load: (kind?: MediaKind) => Promise<Media> };
+export type LinkItem = MediaSource & { audio?: MediaSource };
 type Provider = { name: string; hosts: string[]; resolve: (link: string) => Promise<LinkItem[]> };
 export type Link = { provider: Provider; url: string };
 
@@ -14,8 +18,6 @@ const PROVIDERS: (Provider & { accepts?: (url: URL) => boolean })[] = [
   { name: "Twitter/X", hosts: TWITTER_HOSTS, accepts: isTwitterPost, resolve: resolveTwitter },
   { name: "Instagram", hosts: INSTAGRAM_HOSTS, accepts: isInstagramPost, resolve: resolveInstagram },
 ];
-
-const VIDEO_BYTES = 50 * 1024 * 1024;
 
 export function findLink(text = ""): Link | null {
   for (const [match] of text.matchAll(/https?:\/\/[^\s<>"]+/gi)) {
@@ -27,8 +29,9 @@ export function findLink(text = ""): Link | null {
   return null;
 }
 
-export async function linkMedia(item: LinkItem): Promise<Media> {
-  const options = { maxBytes: VIDEO_BYTES, headers: item.headers };
+export async function linkMedia(item: MediaSource, kind?: MediaKind): Promise<Media> {
+  if ("load" in item) return item.load(kind);
+  const options = { maxBytes: LINK_MEDIA_BYTES, headers: item.headers };
   const { data, type } = await guardedFetch(item.url, item.hosts, options);
   return { data, mimetype: type.split(";")[0]!.trim() || "image/jpeg" };
 }

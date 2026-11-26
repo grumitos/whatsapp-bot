@@ -1,10 +1,21 @@
+import { readdir, readFile, stat, writeFile } from "fs/promises";
+import { join } from "path";
 import { botError, log } from "../log.ts";
-import { fetchJson, guardedFetch } from "./guard.ts";
+import { withTemp } from "../sticker/tools.ts";
+import { allowed, fetchJson, guardedFetch, LINK_MEDIA_BYTES } from "./guard.ts";
 import type { LinkItem } from "./index.ts";
+import { runYtDlp, ytDlp, type Format, type Info } from "./ytdlp.ts";
 
 export const TIKTOK_HOSTS = ["tiktok.com"];
-const MEDIA_HOSTS = ["tikwm.com", "tiktokcdn.com", "tiktokcdn-us.com", "ibyteimg.com"];
+const MEDIA_HOSTS = [
+  "tiktokcdn.com",
+  "tiktokcdn-us.com",
+  "ibyteimg.com",
+  "tiktokv.com",
+  "muscdn.com",
+];
 const POST_PATH = /^\/(?:@[^/]*\/(?:video|photo)\/(\d+)\/?|v\/(\d+)\.html)$/i;
+const DLP_ARGS = ["--no-cache-dir", "--force-ipv4", "--use-extractors", "TikTok,TikTokVM"];
 
 // Como la app de Android: la web oculta los comentarios con adjuntos que no sabe mostrar
 const APP = { aid: "1233", app_name: "musical_ly", device_platform: "android" };
@@ -15,13 +26,14 @@ type Sticker = { animated_url?: Sizes; static_url?: Sizes };
 type Attachments = { cmt_sticker_struct?: Sticker; image_list?: Img[] | null };
 type Comment = Attachments & { cid: string; reply_comment?: Comment[] };
 type Page = { status_code: number; comments?: Comment[]; has_more?: number; cursor?: number };
-type Post = { images?: string[]; play?: string; hdplay?: string };
-type Tikwm = { code: number; msg?: string; data?: Post };
 type Photo = { imageURL?: { urlList?: string[] } };
-type Web = { video?: { playAddr?: string }; imagePost?: { images?: Photo[] } };
+type Web = {
+  video?: { playAddr?: string };
+  imagePost?: { images?: Photo[] };
+  music?: { playUrl?: string };
+};
 
-// El video sale de *.tiktok.com y las fotos de tiktokcdn; tikwm no recibe estas cookies
-const WEB_HOSTS = [...TIKTOK_HOSTS, ...MEDIA_HOSTS.filter((host) => host !== "tikwm.com")];
+const WEB_HOSTS = [...TIKTOK_HOSTS, ...MEDIA_HOSTS];
 
 const items = (urls: (string | undefined)[]): LinkItem[] =>
   urls.flatMap((url) => (url ? [{ url, hosts: MEDIA_HOSTS }] : [])).slice(0, 10);
@@ -40,14 +52,16 @@ function webItems(json: string | undefined, cookie: string): LinkItem[] {
   const photos = (post?.imagePost?.images ?? []).map((i) => jpeg(i.imageURL?.urlList ?? []));
   const urls = photos.length ? photos : [post?.video?.playAddr];
   const headers = { Cookie: cookie, Referer: "https://www.tiktok.com/" };
-  const media = urls.flatMap((url) => (url ? [{ url, hosts: WEB_HOSTS, headers }] : []));
+  const musicUrl = photos.length ? post?.music?.playUrl : undefined;
+  const audio = musicUrl ? { url: musicUrl, hosts: WEB_HOSTS, headers } : undefined;
+  const media = urls.flatMap((url) => (url ? [{ url, hosts: WEB_HOSTS, headers, audio }] : []));
   if (!media.length) {
     throw botError("tiktok", `La página no trae el post: ${detail?.statusCode ?? "sin datos"}`);
   }
   return media.slice(0, 10);
 }
 
-// Más rápido y estable que tikwm. La página /photo/ no trae el post; la /video/ con el mismo id, sí
+// La página /photo/ no trae el post; la /video/ con el mismo id, sí
 async function fromWeb(url: URL) {
   const page = url.href.replace("/photo/", "/video/");
   const { data, headers } = await guardedFetch(page, TIKTOK_HOSTS, { timeout: 8000 });
@@ -55,6 +69,43 @@ async function fromWeb(url: URL) {
   const found = html.match(/id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([\s\S]*?)<\/script>/);
   const cookie = headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
   return webItems(found?.[1], cookie);
+}
+
+async function downloadFormat(info: Info, format: Format) {
+  const tooLarge = () => botError("link_size", "The TikTok source exceeds 50 MB.");
+  if ((format.filesize ?? 0) > LINK_MEDIA_BYTES) throw tooLarge();
+  return withTemp(async (dir) => {
+    const source = join(dir, "info.json");
+    // yt-dlp conserva las cookies y cabeceras de la extracción para la descarga.
+    await writeFile(source, JSON.stringify({ ...info, formats: [format] }), { mode: 0o600 });
+    await runYtDlp([
+      "--ignore-config", "--quiet", "--no-warnings", "--no-playlist", "--socket-timeout", "15",
+      ...DLP_ARGS, "--load-info-json", source, "-f", "best*",
+      "--max-filesize", String(LINK_MEDIA_BYTES), "-o", join(dir, "media.%(ext)s"),
+    ]).catch(() => { throw botError("clip_failed", "yt-dlp could not download the TikTok media."); });
+    const file = (await readdir(dir)).find((name) => /^media\.(?!(?:part|ytdl)$)[a-z0-9]+$/i.test(name));
+    if (!file) throw botError("clip_failed", "yt-dlp did not return the TikTok media.");
+    const path = join(dir, file);
+    if ((await stat(path)).size > LINK_MEDIA_BYTES) throw tooLarge();
+    const ext = file.slice("media.".length);
+    const mimetype = format.vcodec !== "none" ? `video/${ext}`
+      : ext === "mp3" ? "audio/mpeg" : ext === "m4a" ? "audio/mp4" : `audio/${ext}`;
+    return { data: await readFile(path), mimetype };
+  });
+}
+
+async function fromYtDlp(url: URL): Promise<LinkItem[]> {
+  const info = await ytDlp(url.href.replace("/photo/", "/video/"), DLP_ARGS)
+    .catch(() => { throw botError("clip_failed", "yt-dlp could not resolve the TikTok post."); });
+  const formats = (info.formats ?? []).filter((format) => {
+    const media = URL.parse(format.url);
+    return format.protocol === "https" && media && allowed(media, WEB_HOSTS);
+  });
+  const videos = formats.filter(({ vcodec }) => vcodec && vcodec !== "none");
+  const video = videos.findLast(({ acodec }) => acodec && acodec !== "none") ?? videos.at(-1);
+  const audio = formats.findLast(({ vcodec, acodec }) => vcodec === "none" && acodec && acodec !== "none");
+  if (!video && !audio) throw botError("tiktok", "TikTok did not return media.");
+  return [{ load: (kind) => downloadFormat(info, (kind === "audio" ? audio ?? video : video ?? audio)!) }];
 }
 
 // Un comentario con sticker trae image_list: null, y el valor por defecto no cubre null
@@ -90,15 +141,6 @@ export async function resolveTiktok(link: string) {
     if (!media.length) throw botError("tiktok", "El comentario no existe o no tiene un adjunto");
     return media;
   }
-  const found = await fromWeb(url).catch((err) => log.warn("TikTok: se usa tikwm", err));
-  if (found) return found;
-  const query = new URLSearchParams({ url: post ? url.origin + url.pathname : url.href, hd: "1" });
-  const api = `https://www.tikwm.com/api/?${query}`;
-  const payload = await fetchJson<Tikwm>(api, MEDIA_HOSTS);
-  if (payload.code !== 0) throw botError("tiktok", `tikwm: ${payload.code} ${payload.msg}`);
-  // En un post de fotos, play es la música; la calidad normal basta (el sticker mide 512 px)
-  const { images = [], play, hdplay } = payload.data ?? {};
-  const media = images.length ? items(images) : items([play ?? hdplay]);
-  if (!media.length) throw botError("tiktok", "tikwm no devolvió el video");
-  return media;
+  const found = await fromWeb(url).catch((err) => log.warn("TikTok web could not resolve the post; using yt-dlp", err));
+  return found ?? fromYtDlp(url);
 }

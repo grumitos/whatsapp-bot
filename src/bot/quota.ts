@@ -5,7 +5,7 @@ import type { Sender } from "../wa/identity.ts";
 import { isOwner, personRule } from "./access.ts";
 
 export type Use = "replies" | "conversation";
-export type Taken = { keys: string[]; last: boolean };
+export type Taken = { windows: { key: string; start: number }[]; last: boolean };
 type Window = { start: number; count: number };
 const FILE = join(DATA_DIR, "quotas.json");
 const usage = readJson<Record<string, Window>>(FILE, {});
@@ -28,7 +28,7 @@ export function take(
   chatId: string,
   sender: Sender,
 ): Taken | { resetAt: Date; hours: number } {
-  if (isOwner(sender)) return { keys: [], last: false };
+  if (isOwner(sender)) return { windows: [], last: false };
   const now = Date.now();
   const windows = limitsOf(use, chatId, sender).map(({ key, max, hours }) => {
     const end = (usage[key]?.start ?? 0) + hours * 3_600_000;
@@ -46,14 +46,20 @@ export function take(
   windows.forEach(({ entry }) => entry.count++);
   save();
   return {
-    keys: windows.map(({ key }) => key),
+    windows: windows.map(({ key, entry }) => ({ key, start: entry.start })),
     last: windows.some(({ entry, max }) => entry.count >= max),
   };
 }
 
-export function refund({ keys }: Taken) {
-  for (const key of keys) if (usage[key]?.count) usage[key].count--;
-  if (keys.length) save();
+export function refund({ windows }: Taken) {
+  let changed = false;
+  for (const { key, start } of windows.splice(0)) {
+    const entry = usage[key];
+    if (entry?.start !== start || !entry.count) continue;
+    entry.count--;
+    changed = true;
+  }
+  if (changed) save();
 }
 
 export function limitNotice({ resetAt, hours }: { resetAt: Date; hours: number }) {
